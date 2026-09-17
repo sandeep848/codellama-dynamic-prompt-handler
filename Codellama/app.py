@@ -1,39 +1,37 @@
+"""Local CodeLlama workbench powered by Ollama."""
+
 import requests
-import json
-import gradio as gr
+import streamlit as st
 
-url = "http://localhost:11434/api/generate"
-headers = {'Content-Type': 'application/json'}
-history = []
+from prompt_router import TASKS, build_prompt
 
-def response(prompt):
-    history.append(prompt)
-    data = {
-        "model": "TransformersPrime",
-        "prompt": "\n".join(history),
-        "stream": False
-    }
-    response = requests.post(url, headers=headers, data=json.dumps(data))
-    if response.status_code == 200:
-        result = json.loads(response.text)
-        return result.get('response', 'No response field found')
-    return f"Error: {response.text}"
+st.set_page_config(page_title="Local CodeLlama Workbench", layout="wide")
+st.title("Local CodeLlama Workbench")
+st.caption("One local model, five explicit software-engineering workflows")
 
-def clear_history():
-    global history
-    history = []
-    return "History cleared!"
+with st.sidebar:
+    endpoint = st.text_input("Ollama endpoint", "http://localhost:11434")
+    model = st.text_input("Model", "codellama")
+    task = st.selectbox("Task", list(TASKS))
+    language = st.selectbox("Language", ["python", "javascript", "typescript", "cpp", "java", "sql"])
 
-with gr.Blocks() as interface:
-    with gr.Row():
-        prompt_input = gr.Textbox(label="Enter your Prompt", lines=4, placeholder="Type here...")
-        clear_button = gr.Button("Clear History", variant="secondary")
-    
-    response_output = gr.Textbox(label="Response", interactive=False)
-    
-    submit_button = gr.Button("Submit")
-    
-    submit_button.click(response, inputs=prompt_input, outputs=response_output)
-    clear_button.click(clear_history, inputs=None, outputs=response_output)
+context = st.text_input("Project context", placeholder="CLI parser, FastAPI route, data pipeline…")
+code = st.text_area("Code", height=360, placeholder="Paste code here")
 
-interface.launch(share=True)
+if st.button("Run local review", type="primary", disabled=not code):
+    try:
+        routed = build_prompt(task, language, code, context)
+        response = requests.post(
+            f"{endpoint.rstrip('/')}/api/generate",
+            json={"model": model, "prompt": routed.prompt, "stream": False},
+            timeout=180,
+        )
+        response.raise_for_status()
+        st.subheader(task)
+        st.markdown(response.json()["response"])
+        with st.expander("Prompt sent to local model"):
+            st.code(routed.prompt)
+    except requests.RequestException as exc:
+        st.error(f"Could not reach Ollama: {exc}")
+    except (KeyError, ValueError) as exc:
+        st.error(str(exc))
